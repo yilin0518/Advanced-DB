@@ -1,5 +1,6 @@
 import pandas as pd
 from sqlalchemy import create_engine, text
+from sqlalchemy.types import VARCHAR, TEXT, Integer, Float, DateTime
 import time
 import os
 import random
@@ -53,6 +54,46 @@ def load_data(engine):
         'product_category_name_translation.csv': 'category_translation'
     }
 
+    # 定义列类型映射，解决索引长度问题
+    # 这里的长度是根据数据集特征估算的
+    column_types = {
+        # ID 类 (UUID 通常是 32 位)
+        'customer_id': VARCHAR(32),
+        'customer_unique_id': VARCHAR(32),
+        'order_id': VARCHAR(32),
+        'product_id': VARCHAR(32),
+        'seller_id': VARCHAR(32),
+        'review_id': VARCHAR(32),
+        
+        # 短文本类
+        'customer_zip_code_prefix': VARCHAR(10),
+        'customer_city': VARCHAR(100),
+        'customer_state': VARCHAR(5),
+        'product_category_name': VARCHAR(100),
+        'payment_type': VARCHAR(50),
+        'order_status': VARCHAR(50),
+        
+        # 长文本类 (保留 TEXT)
+        'review_comment_title': VARCHAR(255),
+        'review_comment_message': TEXT,
+        
+        # 数值类 (Pandas 通常能自动识别，但显式指定更安全)
+        'price': Float(),
+        'freight_value': Float(),
+        'payment_value': Float(),
+        'review_score': Integer(),
+        
+        # 时间类
+        'order_purchase_timestamp': DateTime(),
+        'order_approved_at': DateTime(),
+        'order_delivered_carrier_date': DateTime(),
+        'order_delivered_customer_date': DateTime(),
+        'order_estimated_delivery_date': DateTime(),
+        'shipping_limit_date': DateTime(),
+        'review_creation_date': DateTime(),
+        'review_answer_timestamp': DateTime()
+    }
+
     print("\n=== 开始数据加载 ===")
     start_total = time.time()
 
@@ -68,16 +109,25 @@ def load_data(engine):
             # 读取 CSV
             df = pd.read_csv(file_path)
             
-            # 简单的预处理：转换日期列（针对 orders 和 reviews 表）
+            # 简单的预处理：转换日期列
             if 'order_purchase_timestamp' in df.columns:
                 date_cols = [col for col in df.columns if 'date' in col or 'timestamp' in col]
                 for col in date_cols:
                     df[col] = pd.to_datetime(df[col], errors='coerce')
             
+            # 筛选出当前 DataFrame 中存在的列的类型映射
+            dtype_mapping = {col: column_types[col] for col in df.columns if col in column_types}
+
             # 写入数据库
-            # chunksize 设置批量写入的大小，if_exists='replace' 会重建表
             start_table = time.time()
-            df.to_sql(name=table_name, con=engine, if_exists='replace', index=False, chunksize=1000)
+            df.to_sql(
+                name=table_name, 
+                con=engine, 
+                if_exists='replace', 
+                index=False, 
+                chunksize=1000,
+                dtype=dtype_mapping  # 关键修改：传入类型映射
+            )
             end_table = time.time()
             
             print(f"  - 成功写入 {len(df)} 行，耗时: {end_table - start_table:.2f} 秒")
@@ -103,19 +153,55 @@ def get_random_samples(engine, table, column, limit=100):
         print(f"获取样本数据失败 ({table}.{column}): {e}")
         return []
 
-def run_benchmark(engine):
+def create_indexes(engine):
+    """创建数据库索引以优化查询性能"""
+    print("\n=== 正在创建索引 (Indexing) ===")
+    start_time = time.time()
+    
+    # 定义需要创建的索引
+    # 格式: (表名, 索引名, 列名)
+    indexes = [
+        # 外键和主键查找优化
+        ('orders', 'idx_orders_customer_id', 'customer_id'),
+        ('order_items', 'idx_items_order_id', 'order_id'),
+        ('order_items', 'idx_items_product_id', 'product_id'),
+        ('products', 'idx_products_product_id', 'product_id'),
+        ('customers', 'idx_customers_customer_id', 'customer_id'),
+        
+        # 范围查询和排序优化
+        ('orders', 'idx_orders_date', 'order_purchase_timestamp'),
+        ('order_items', 'idx_items_price', 'price'),
+        
+        # 聚合查询优化
+        ('customers', 'idx_customers_city', 'customer_city'),
+        ('products', 'idx_products_category', 'product_category_name'),
+        
+        # 文本搜索优化 (注意：普通 B-Tree 索引对 LIKE '%...%' 无效，这里仅作演示对比)
+        ('order_reviews', 'idx_reviews_comment', 'review_comment_message')
+    ]
+
+    with engine.connect() as conn:
+        for table, idx_name, column in indexes:
+            print(f"  - Creating index {idx_name} on {table}({column})...")
+            try:
+                # MySQL 创建索引语法
+                conn.execute(text(f"CREATE INDEX {idx_name} ON {table} ({column})"))
+            except Exception as e:
+                print(f"    Warning: {e}")
+    
+    print(f"=== 索引创建完成，耗时: {time.time() - start_time:.2f} 秒 ===\n")
+
+def run_benchmark(engine, label="No Index"):
     """执行增强版查询性能测试"""
-    print("\n=== 正在准备测试样本数据 (Sampling) ===")
-    # 预先获取随机参数，确保测试覆盖不同的数据行
+    print(f"=== 开始查询性能测试 [{label}] ===\n")
+    
+    # 预先获取随机参数
+    # 注意：为了公平对比，有无索引应该使用相同的随机种子或重新采样
+    # 这里我们重新采样，模拟真实负载
     sample_customer_ids = get_random_samples(engine, 'customers', 'customer_id', 50)
     sample_product_ids = get_random_samples(engine, 'products', 'product_id', 50)
     
-    print(f"已准备: {len(sample_customer_ids)} 个随机 Customer ID, {len(sample_product_ids)} 个随机 Product ID")
-    print("=== 开始查询性能测试 ===\n")
-    
     # 定义测试查询集
-    # sql_template: SQL 模板，使用 {param} 占位
-    # params: 一个列表，每次执行时从中随机选一个参数
     queries = [
         # ------------------- 1. 简单查询 (Point Queries) -------------------
         {
@@ -133,7 +219,7 @@ def run_benchmark(engine):
             "params": sample_product_ids
         },
 
-        # ------------------- 2. 范围查询 (Range Queries) - 新增 -------------------
+        # ------------------- 2. 范围查询 (Range Queries) -------------------
         {
             "type": "范围查询 (Range Query)",
             "name": "时间范围查询 (Orders by Date)",
@@ -149,12 +235,12 @@ def run_benchmark(engine):
             "params": None
         },
 
-        # ------------------- 3. 文本搜索 (Text Search) - 新增 -------------------
+        # ------------------- 3. 文本搜索 (Text Search) -------------------
         {
             "type": "文本搜索 (Text Search)",
             "name": "评论关键词搜索 (LIKE)",
-            "desc": "查找评论内容中包含 'bom' (good) 的评论",
-            "sql_template": "SELECT * FROM order_reviews WHERE review_comment_message LIKE '%bom%' LIMIT 100",
+            "desc": "查找包含 'lannister' (低频词) 的评论",
+            "sql_template": "SELECT * FROM order_reviews WHERE review_comment_message LIKE '%estão%' LIMIT 100",
             "params": None
         },
 
@@ -221,14 +307,12 @@ def run_benchmark(engine):
     
     for q in queries:
         print(f"测试: [{q['type']}] {q['name']}")
-        print(f"  -> {q['desc']}")
         
         times = []
-        # 执行 10 次取平均值 (比之前的 5 次更准确)
+        # 执行 10 次取平均值
         for i in range(10):
             # 准备 SQL
             if q['params']:
-                # 随机选择一个参数
                 param = random.choice(q['params'])
                 sql = q['sql_template'].format(param=param)
             else:
@@ -242,26 +326,18 @@ def run_benchmark(engine):
             times.append(end - start)
         
         avg_time = sum(times) / len(times)
-        min_time = min(times)
-        max_time = max(times)
-        
-        print(f"  -> 平均: {avg_time:.4f}s | 最小: {min_time:.4f}s | 最大: {max_time:.4f}s")
-        print("-" * 40)
+        print(f"  -> 平均: {avg_time:.4f}s")
         
         results.append({
             "Type": q['type'],
             "Name": q['name'],
-            "Avg Time (s)": avg_time
+            "Time": avg_time
         })
-
-    # 打印汇总表
-    print("\n=== 测试结果汇总 ===")
-    df_res = pd.DataFrame(results)
-    print(df_res.to_string(index=False))
+    
+    return results
 
 def main():
     # 1. 获取数据库连接
-    # 在 Docker 环境中，MySQL 可能还没完全启动，增加简单的重试机制
     max_retries = 10
     engine = None
     for i in range(max_retries):
@@ -280,16 +356,37 @@ def main():
         print("检测到 AUTO_LOAD_DATA 环境变量，自动开始加载数据...")
         load_data(engine)
     else:
-        # 交互式询问
         try:
             user_input = input("是否需要重新加载数据? (y/n): ")
             if user_input.lower() == 'y':
                 load_data(engine)
         except EOFError:
-            print("无法读取输入 (可能在非交互式环境)，跳过数据加载。")
+            print("无法读取输入，跳过数据加载。")
     
-    # 3. 运行基准测试
-    run_benchmark(engine)
+    # 3. 运行基准测试 (无索引)
+    results_no_index = run_benchmark(engine, label="No Index")
+    
+    # 4. 创建索引
+    create_indexes(engine)
+    
+    # 5. 运行基准测试 (有索引)
+    results_with_index = run_benchmark(engine, label="With Index")
+    
+    # 6. 生成对比报告
+    print("\n=== 最终性能对比报告 (Performance Comparison) ===")
+    comparison = []
+    for r1, r2 in zip(results_no_index, results_with_index):
+        speedup = r1['Time'] / r2['Time'] if r2['Time'] > 0 else 0
+        comparison.append({
+            "Query Type": r1['Type'],
+            "Query Name": r1['Name'],
+            "No Index (s)": f"{r1['Time']:.4f}",
+            "With Index (s)": f"{r2['Time']:.4f}",
+            "Speedup (x)": f"{speedup:.2f}x"
+        })
+    
+    df_compare = pd.DataFrame(comparison)
+    print(df_compare.to_string(index=False))
 
 if __name__ == "__main__":
     main()

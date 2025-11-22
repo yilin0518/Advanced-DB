@@ -17,14 +17,24 @@ services:
       timeout: 5s
       retries: 5
 
-  benchmark:
+  mongo:
+    image: mongo:5.0
+    container_name: olist_mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: password
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  benchmark_mysql:
     build: .
-    container_name: olist_benchmark
+    container_name: olist_benchmark_mysql
     depends_on:
       mysql:
         condition: service_healthy
     volumes:
-      # 将本地的数据集目录挂载到容器内的 /app/dataset
       - ./dataset:/app/dataset
     environment:
       - DB_HOST=mysql
@@ -32,7 +42,23 @@ services:
       - DB_PASSWORD=password
       - DB_NAME=olist_db
       - DATASET_DIR=/app/dataset
-      - AUTO_LOAD_DATA=true  # 设置为 true 以自动加载数据，无需交互
+      - AUTO_LOAD_DATA=true
+    command: ["python", "mysql_benchmark.py"]
+
+  benchmark_mongo:
+    build: .
+    container_name: olist_benchmark_mongo
+    depends_on:
+      - mongo
+    volumes:
+      - ./dataset:/app/dataset
+    environment:
+      - MONGO_URI=mongodb://root:password@mongo:27017/
+      - DB_NAME=olist_db
+      - DATASET_DIR=/app/dataset
+      - AUTO_LOAD_DATA=true
+    command: ["python", "mongo_benchmark.py"]
 
 volumes:
   mysql_data:
+  mongo_data:
