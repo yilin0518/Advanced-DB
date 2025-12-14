@@ -1,63 +1,55 @@
-version: '3.8'
-
 services:
   mysql:
     image: mysql:8.0
-    container_name: olist_mysql
+    container_name: fusion-mysql
     environment:
       MYSQL_ROOT_PASSWORD: password
-      MYSQL_DATABASE: olist_db
+      MYSQL_DATABASE: olist_relations
     ports:
-      - "3306:3306"
+      - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 20s
+      retries: 10
 
-  mongo:
-    image: mongo:5.0
-    container_name: olist_mongo
+  mongodb:
+    image: mongo:6.0
+    container_name: fusion-mongo
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD: password
     ports:
-      - "27017:27017"
+      - "27018:27017"
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  benchmark_mysql:
-    build: .
-    container_name: olist_benchmark_mysql
+  fusion-router:
+    build:
+      context: ./fusion_router  # 正确的context
+      dockerfile: Dockerfile    # 相对于context的路径
+    container_name: fusion-router
+    ports:
+      - "8000:8000"
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: root
+      MYSQL_PASSWORD: password
+      MONGODB_URI: mongodb://root:password@mongodb:27017
     depends_on:
       mysql:
         condition: service_healthy
+      mongodb:
+        condition: service_healthy
     volumes:
-      - ./dataset:/app/dataset
-    environment:
-      - DB_HOST=mysql
-      - DB_USER=root
-      - DB_PASSWORD=password
-      - DB_NAME=olist_db
-      - DATASET_DIR=/app/dataset
-      - AUTO_LOAD_DATA=true
-    command: ["python", "mysql_benchmark.py"]
-
-  benchmark_mongo:
-    build: .
-    container_name: olist_benchmark_mongo
-    depends_on:
-      - mongo
-    volumes:
-      - ./dataset:/app/dataset
-    environment:
-      - MONGO_URI=mongodb://root:password@mongo:27017/
-      - DB_NAME=olist_db
-      - DATASET_DIR=/app/dataset
-      - AUTO_LOAD_DATA=true
-    command: ["python", "mongo_benchmark.py"]
+      - ./dataset:/app/dataset  # 挂载数据集
 
 volumes:
   mysql_data:

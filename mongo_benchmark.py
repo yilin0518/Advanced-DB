@@ -6,7 +6,7 @@ import random
 from datetime import datetime
 
 # ================= 配置区域 =================
-MONGO_URI = os.getenv('MONGO_URI', 'mongodb://root:password@localhost:27017/')
+MONGO_URI = os.getenv('MONGO_URI', 'mongodb://root:password@localhost:27018/')
 DB_NAME = os.getenv('DB_NAME', 'olist_db')
 DATASET_DIR = os.getenv('DATASET_DIR', './dataset')
 AUTO_LOAD_DATA = os.getenv('AUTO_LOAD_DATA', 'false').lower() == 'true'
