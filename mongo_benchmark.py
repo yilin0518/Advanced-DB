@@ -7,10 +7,10 @@ from datetime import datetime
 import hashlib  # ✅ 新增：稳定 cache key
 from cache_helper import CacheHelper  # ✅ 新增：Redis 缓存
 
-# ================= 配置区域（与 MySQL 对齐） =================
-DB_HOST = os.getenv('DB_HOST', '127.0.0.1')          # ✅ 对齐 MySQL
-DB_NAME = os.getenv('DB_NAME', 'olist_db')           # ✅ 对齐 MySQL
-DATASET_DIR = os.getenv('DATASET_DIR', './dataset')  # ✅ 对齐 MySQL
+# ================= 配置区域 =================
+MONGO_URI = os.getenv('MONGO_URI', 'mongodb://root:password@localhost:27018/')
+DB_NAME = os.getenv('DB_NAME', 'olist_db')
+DATASET_DIR = os.getenv('DATASET_DIR', './dataset')
 AUTO_LOAD_DATA = os.getenv('AUTO_LOAD_DATA', 'false').lower() == 'true'
 
 MONGO_PORT = os.getenv('MONGO_PORT', '27017')

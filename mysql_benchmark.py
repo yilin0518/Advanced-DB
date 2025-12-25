@@ -14,9 +14,8 @@ from cache_helper import CacheHelper
 # ================= 配置区域 =================
 DB_USER = os.getenv('DB_USER', 'root')
 DB_PASSWORD = os.getenv('DB_PASSWORD', 'password')
-
-DB_HOST = os.getenv('DB_HOST', '127.0.0.1')  # ✅ CHANGED: 默认改成 127.0.0.1，强制走 TCP
-DB_PORT = os.getenv('DB_PORT', '3306')
+DB_HOST = os.getenv('DB_HOST', 'localhost')
+DB_PORT = os.getenv('DB_PORT', '3307')
 DB_NAME = os.getenv('DB_NAME', 'olist_db')
 DATASET_DIR = os.getenv('DATASET_DIR', './dataset')
 
